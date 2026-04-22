@@ -81,9 +81,8 @@ def main():
     parser.add_argument(
         '--type',
         type=int,
-        default=int(os.getenv("FRACTAL_CHOICE", 1)),  # ✅ FIX
-        choices=range(1, 11),
-        help="Fractal type (1-10)"
+        required=True,
+        choices=range(1, 11)
     )
 
     parser.add_argument('--output', type=str, default="output.png")
