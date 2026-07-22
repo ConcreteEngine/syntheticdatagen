@@ -1,5 +1,6 @@
-import os  # 
+import os
 import numpy as np
+import cupy as cp
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from noise import pnoise2
@@ -8,6 +9,7 @@ import argparse
 # ------------------------------
 # Mandelbrot Set Functions
 # ------------------------------
+'''
 def mandelbrot(c, max_iter):
     z = c
     for n in range(max_iter):
@@ -25,17 +27,95 @@ def mandelbrot_set(xmin, xmax, ymin, ymax, width, height, max_iter):
             n3[i, j] = mandelbrot(r1[i] + 1j*r2[j], max_iter)
     return (r1, r2, n3)
 
-def plot_mandelbrot(xmin, xmax, ymin, ymax, width=10, height=10, max_iter=256):
+def plot_mandelbrot(
+    xmin, xmax, ymin, ymax,
+    img_width=2048, img_height=2048,
+    fig_width=10, fig_height=10,
+    max_iter=256
+):
     dpi = 80
     img_width = dpi * width
     img_height = dpi * height
     x, y, z = mandelbrot_set(xmin, xmax, ymin, ymax, img_width, img_height, max_iter)
 
-    plt.figure(figsize=(width, height))
+    plt.figure(figsize=(fig_width, fig_height))
     plt.imshow(z.T, origin='lower', extent=[xmin, xmax, ymin, ymax])
     plt.xlabel("Re")
     plt.ylabel("Im")
     plt.title("Mandelbrot Set")
+
+'''
+def mandelbrot_set(xmin, xmax, ymin, ymax, width, height, max_iter):
+    # Create coordinate grid on the GPU
+    x = cp.linspace(xmin, xmax, width)
+    y = cp.linspace(ymin, ymax, height)
+    X, Y = cp.meshgrid(x, y)
+
+    # Complex plane
+    C = X + 1j * Y
+
+    # Initialize arrays
+    Z = cp.zeros_like(C)
+    output = cp.full(C.shape, max_iter, dtype=cp.int32)
+
+    # Points that have not yet escaped
+    mask = cp.ones(C.shape, dtype=bool)
+
+    for i in range(max_iter):
+        # Update active points
+        Z[mask] = Z[mask] * Z[mask] + C[mask]
+
+        # Determine which points escaped
+        escaped = cp.abs(Z) > 2
+
+        # Record first escape iteration
+        newly_escaped = escaped & mask
+        output[newly_escaped] = i
+
+        # Remove escaped points
+        mask &= ~escaped
+
+        # Stop early if everything has escaped
+        if not mask.any():
+            break
+
+    return x, y, output
+
+
+def plot_mandelbrot(xmin, xmax, ymin, ymax,
+                    width=10, height=10, max_iter=256):
+
+    dpi = 80
+    img_width = dpi * width
+    img_height = dpi * height
+
+    x, y, z = mandelbrot_set(
+        xmin, xmax,
+        ymin, ymax,
+        img_width,
+        img_height,
+        max_iter
+    )
+
+    # Wait for GPU to finish before copying results
+    cp.cuda.Stream.null.synchronize()
+
+    # Copy to CPU for plotting
+    z = cp.asnumpy(z)
+
+    plt.figure(figsize=(width, height))
+    plt.imshow(
+        z,
+        origin="lower",
+        extent=[xmin, xmax, ymin, ymax],
+        cmap="hot"
+    )
+    plt.xlabel("Re")
+    plt.ylabel("Im")
+    plt.title("Mandelbrot Set")
+    plt.colorbar(label="Iterations")
+    plt.show()
+
 
 # ------------------------------
 # Julia Set Functions
@@ -67,6 +147,84 @@ def plot_julia(xmin, xmax, ymin, ymax, c, width=10, height=10, max_iter=256):
     plt.xlabel("Re")
     plt.ylabel("Im")
     plt.title(f"Julia Set for c = {c}")
+
+'''
+def julia_set(xmin, xmax, ymin, ymax, width, height, c, max_iter):
+    # Create coordinate grid on the GPU
+    x = cp.linspace(xmin, xmax, width)
+    y = cp.linspace(ymin, ymax, height)
+    X, Y = cp.meshgrid(x, y)
+
+    # Initial z values are the coordinates
+    Z = X + 1j * Y
+
+    # Constant c for every point
+    C = cp.full(Z.shape, c)
+
+    # Output array initialized to max_iter
+    output = cp.full(Z.shape, max_iter, dtype=cp.int32)
+
+    # Points that have not yet escaped
+    mask = cp.ones(Z.shape, dtype=bool)
+
+    for i in range(max_iter):
+        # Update only active points
+        Z[mask] = Z[mask] * Z[mask] + C[mask]
+
+        # Check which points have escaped
+        escaped = cp.abs(Z) > 2
+        newly_escaped = escaped & mask
+
+        # Record the escape iteration
+        output[newly_escaped] = i
+
+        # Remove escaped points
+        mask &= ~escaped
+
+        # Stop if all points have escaped
+        if not mask.any():
+            break
+
+    return x, y, output
+
+
+def plot_julia(xmin, xmax, ymin, ymax, c,
+               width=10, height=10, max_iter=256):
+
+    dpi = 80
+    img_width = dpi * width
+    img_height = dpi * height
+
+    x, y, z = julia_set(
+        xmin,
+        xmax,
+        ymin,
+        ymax,
+        img_width,
+        img_height,
+        c,
+        max_iter
+    )
+
+    # Ensure GPU work is finished before copying
+    cp.cuda.Stream.null.synchronize()
+
+    # Move result to CPU for plotting
+    z = cp.asnumpy(z)
+
+    plt.figure(figsize=(width, height))
+    plt.imshow(
+        z,
+        origin='lower',
+        extent=[xmin, xmax, ymin, ymax],
+        cmap='hot'
+    )
+    plt.xlabel("Re")
+    plt.ylabel("Im")
+    plt.title(f"Julia Set for c = {c}")
+    plt.colorbar(label="Iterations")
+    plt.show()
+'''
 
 def sierpinski_triangle(ax, p1, p2, p3, depth):
     if depth == 0:
@@ -327,7 +485,7 @@ def main():
     choice = args.type
 
     if choice == 1:
-        plot_mandelbrot(-2.0, 0.5, -1.25, 1.25, 10, 10, 256)
+        plot_mandelbrot(-2.0, 0.5,-1.25, 1.25,25,25,max_iter=256)
     elif choice == 2:
         c = complex(args.c)
         plot_julia(-1.5, 1.5, -1.5, 1.5, c, 10, 10, 256)
